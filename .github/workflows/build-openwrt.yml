@@ -60,8 +60,10 @@ jobs:
         echo "--------------------------硬盘信息--------------------------"
         echo -e "\e[1;32m硬盘数量：\e[0m$(ls /dev/sd* | grep -v [1-9] | wc -l)" && df -hT
         echo "--------------------------操作系统--------------------------"
-        echo -e "\e[1;32m系统版本:\e[0m[ -f /etc/os-release ] && cat /etc/os-release | grep PRETTY_NAME | cut -d '"' -f 2 || lsb_release -d"
-        echo -e "\e[1;32m内核版本:\e[0muname -smr"
+        echo -e "\e[1;32m系统版本:\e[0m"
+        [ -f /etc/os-release ] && cat /etc/os-release | grep PRETTY_NAME | cut -d '"' -f 2 || lsb_release -d
+        echo -e "\e[1;32m内核版本:\e[0m"
+        uname -smr
         
     - name: 释放磁盘空间
       uses: sbwml/actions@free-disk
