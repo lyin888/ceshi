@@ -58,7 +58,7 @@ jobs:
         echo -e "\e[1;32m已安装内存详细信息\e[0m"
         echo -e "$(sudo lshw -short -C memory | grep GiB) \n"
         echo "--------------------------硬盘信息--------------------------"
-        echo -e "\e[1;32m硬盘数量：\e[0m$(ls /dev/sd* | grep -v [1-9] | wc -l)" && df -hT"
+        echo -e "\e[1;32m硬盘数量：\e[0m$(ls /dev/sd* | grep -v [1-9] | wc -l)" && df -hT
         echo "--------------------------操作系统--------------------------"
         echo -e "\e[1;32m系统版本:\e[0m"
         [ -f /etc/os-release ] && cat /etc/os-release | grep PRETTY_NAME | cut -d '"' -f 2 || lsb_release -d
