@@ -59,9 +59,10 @@ jobs:
         echo -e "$(sudo lshw -short -C memory | grep GiB) \n"
         echo "--------------------------硬盘信息--------------------------"
         echo "硬盘数量：$(ls /dev/sd* | grep -v [1-9] | wc -l)" && df -hT
-        echo -e "\n\e[1;32mSystem:\e[0m"
+        echo "--------------------------操作系统--------------------------"
+        echo -e "\n\e[1;32m系统版本:\e[0m"
         [ -f /etc/os-release ] && cat /etc/os-release | grep PRETTY_NAME | cut -d '"' -f 2 || lsb_release -d
-        echo -e "\n\e[1;32mKernel:\e[0m"
+        echo -e "\n\e[1;32m内核版本:\e[0m"
         uname -smr
         
     - name: 释放磁盘空间
