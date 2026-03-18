@@ -22,7 +22,6 @@ on:
         default: false
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
   REPO_URL: https://github.com/immortalwrt/immortalwrt.git
   REPO_BRANCH: v24.10.5
   FEEDS_CONF: feeds.conf.default
@@ -179,7 +178,7 @@ jobs:
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: 上传固件并发布
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v6
       if: steps.tag.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
