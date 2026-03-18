@@ -22,6 +22,7 @@ on:
         default: false
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
   REPO_URL: https://github.com/immortalwrt/immortalwrt.git
   REPO_BRANCH: v24.10.5
   FEEDS_CONF: feeds.conf.default
