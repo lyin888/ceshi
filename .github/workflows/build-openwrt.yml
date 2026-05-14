@@ -1,5 +1,5 @@
 # ===============================================
-# X64软路由-UEFI - 最终严谨优化版
+# X64软路由-UEFI - 最终严谨缓存优化版
 # ===============================================
 name: X64软路由-UEFI
 
@@ -31,6 +31,8 @@ env:
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
+  CCACHE_DIR: /mnt/workdir/openwrt/ccache
+  CCACHE_MAXSIZE: 8G
 
 jobs:
   build:
@@ -63,7 +65,7 @@ jobs:
 
     - name: 创建工作目录
       run: |
-        sudo mkdir -p /mnt/workdir
+        sudo mkdir -p /mnt/workdir/openwrt/ccache
         sudo chown -R $USER:$USER /mnt/workdir
         df -hT /mnt
 
@@ -75,17 +77,37 @@ jobs:
         sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
         sudo apt-get -qq autoremove --purge
         sudo apt-get -qq clean
+        sudo apt-get install -y ccache
 
     - name: 克隆源代码
       working-directory: /mnt/workdir
       run: |
         git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /mnt/workdir/openwrt $GITHUB_WORKSPACE/openwrt
-        ls -la openwrt/
+        echo "CCACHE_DIR=$CCACHE_DIR" >> $GITHUB_ENV
+        echo "CCACHE_MAXSIZE=$CCACHE_MAXSIZE" >> $GITHUB_ENV
+
+    - name: 配置 ccache
+      run: |
+        mkdir -p $CCACHE_DIR
+        ccache -M $CCACHE_MAXSIZE
+        ccache -z   # 清零统计（可选）
+
+    # ==================== 缓存恢复 ====================
+    - name: 恢复 dl 和 ccache 缓存
+      uses: actions/cache/restore@v4
+      id: cache-restore
+      with:
+        path: |
+          openwrt/dl
+          ${{ env.CCACHE_DIR }}
+        key: openwrt-cache-${{ env.REPO_BRANCH }}-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt/.config') || 'initial' }}
+        restore-keys: |
+          openwrt-cache-${{ env.REPO_BRANCH }}-
 
     - name: 加载自定义 feeds 配置
       run: |
-        [ -f $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
+        [ -f $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default || true
         chmod +x $DIY_P1_SH
         cd openwrt && $GITHUB_WORKSPACE/$DIY_P1_SH || true
 
@@ -95,7 +117,6 @@ jobs:
     - name: 删除指定插件
       run: |
         cd openwrt || exit 1
-
         echo "=== 删除 luci-app-appfilter ==="
         rm -rf feeds/luci/applications/luci-app-appfilter 2>/dev/null || true
         sed -i '/^Source-Makefile:.*luci-app-appfilter/,/^@@/d' feeds/luci.tmp/.packageinfo 2>/dev/null || true
@@ -107,7 +128,6 @@ jobs:
         sed -i '/^Source-Makefile: feeds\/packages\/net\/open-app-filter\/Makefile/,/^@@/d' feeds/packages.tmp/.packageinfo 2>/dev/null || true
         sed -i '/^Package: appfilter/,/^@@/d' feeds/packages.tmp/.packageinfo 2>/dev/null || true
         sed -i '/^$/N;/^\n$/D' feeds/packages.tmp/.packageinfo 2>/dev/null || true
-
         echo "✅ 插件清理完成"
 
     - name: 安装 feeds
@@ -115,8 +135,8 @@ jobs:
 
     - name: 加载自定义配置
       run: |
-        [ -d files ] && mv files openwrt/files
-        [ -f $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
+        [ -d files ] && mv files openwrt/files || true
+        [ -f $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config || true
         chmod +x $DIY_P2_SH
         cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH || true
 
@@ -130,18 +150,33 @@ jobs:
       id: compile
       run: |
         cd openwrt
-        echo "=== 开始编译 - $(nproc) 线程 ==="
+        echo "=== 开始编译，使用 $(nproc) 线程 + ccache ==="
+        echo "ccache 统计（编译前）:"
+        ccache -s
         make -j$(nproc) || make -j$(($(nproc)/2)) || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
+        echo "ccache 统计（编译后）:"
+        ccache -s
 
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME || echo "" > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
+    # ==================== 保存缓存 ====================
+    - name: 保存 dl 和 ccache 缓存
+      uses: actions/cache/save@v4
+      if: always()
+      with:
+        path: |
+          openwrt/dl
+          ${{ env.CCACHE_DIR }}
+        key: openwrt-cache-${{ env.REPO_BRANCH }}-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt/.config') || 'initial' }}
+
     - name: 检查磁盘空间
       if: always()
       run: df -hT
 
+    # ==================== 上传产物 ====================
     - name: 上传 bin 目录
       uses: actions/upload-artifact@v4
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
@@ -155,7 +190,6 @@ jobs:
       if: env.UPLOAD_FIRMWARE == 'true' && steps.compile.outputs.status == 'success'
       run: |
         cd openwrt/bin/targets 2>/dev/null || exit 1
-        # 兼容 x86/64 常见路径
         if [ -d x86/64 ]; then
           cd x86/64
         else
@@ -164,7 +198,7 @@ jobs:
         rm -rf packages 2>/dev/null || true
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
-        ls -la
+        ls -la ./
 
     - name: 上传固件目录
       uses: actions/upload-artifact@v4
@@ -183,6 +217,7 @@ jobs:
         编译完成时间: $(date '+%Y-%m-%d %H:%M:%S')
         固件类型: ImmortalWrt x64 UEFI
         状态: 成功
+        ccache 使用情况: 已启用加速
         EOF
 
     - name: 发布到 Releases
