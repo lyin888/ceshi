@@ -50,9 +50,10 @@ jobs:
 
     - name: 检查服务器性能
       run: |
+        echo -e "\e[1;32m已知CPU型号（降序）：9V74，7763，8370C，8272CL，8171M，E5-2673\e[0m"
         echo -e "\e[1;32m=== 服务器性能信息 ===\e[0m"
-        echo -e "\e[1;32mCPU核心:\e[0m $(nproc) 线程"
         echo -e "\e[1;32mCPU型号:\e[0m $(cat /proc/cpuinfo | grep "model name" | head -1 | cut -d: -f2)"
+        echo -e "\e[1;32mCPU核心:\e[0m $(nproc) 线程"
         echo -e "\e[1;32m内存:\e[0m $(free -h | awk '/^Mem:/{print $2}')"
         df -hT / | tail -1
 
