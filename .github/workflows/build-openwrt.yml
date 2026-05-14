@@ -1,15 +1,7 @@
-#
-# https://github.com/P3TERX/Actions-OpenWrt
-#
-# File: .github/workflows/openwrt-bulder.yml
-# Description: Build OpenWrt using GitHub Actions
-# https://github.com/lwb1978/OpenWrt-Actions
-#
-# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
-#
+# ===============================================
+# GitHub Actions - ImmortalWrt X64 软路由编译
+# 优化版本：2026
+# ===============================================
 name: X64软路由-UEFI
 
 on:
@@ -17,14 +9,23 @@ on:
   workflow_dispatch:
     inputs:
       ssh:
-        description: 'SSH connection to Actions'
+        description: 'SSH connection to Actions (true/false)'
         required: false
         default: false
 
+# 权限最小化
+permissions:
+  contents: read
+  packages: read
+
+# 防止并发构建冲突
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   REPO_URL: https://github.com/immortalwrt/immortalwrt.git
-  REPO_BRANCH: v24.10.5
+  REPO_BRANCH: v24.10.6
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
@@ -39,39 +40,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: 查看
-      uses: actions/checkout@v6
-      
-    - name: 设置变量
+    - name: 查看仓库
+      uses: actions/checkout@v4
+
+    - name: 设置时区
       run: |
         sudo timedatectl set-timezone "$TZ"
-        echo "status=success" >> ${GITHUB_OUTPUT}
-      
+        echo "status=success" >> $GITHUB_OUTPUT
+
     - name: 检查服务器性能
       run: |
-        echo -e "\e[1;32m警告⚠\e[0m"
-        echo -e "\e[1;32m分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！\e[0m"
-        echo -e "\e[1;32m已知CPU型号（降序）：9V74，7763，8370C，8272CL，8171M，E5-2673 \n\e[0m"
-        echo -e "--------------------------\e[1;32mCPU信息\e[0m--------------------------"
-        echo -e "\e[1;32mCPU物理数量：\e[0m$(cat /proc/cpuinfo | grep "physical id" | sort | uniq | wc -l)"
-        echo -e "\e[1;32mCPU核心信息：\e[0m$(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c) \n"
-        echo -e "--------------------------\e[1;32m内存信息\e[0m--------------------------"
-        echo -e "\e[1;32m已安装内存详细信息\e[0m"
-        echo -e "$(sudo lshw -short -C memory | grep GiB) \n"
-        echo -e "--------------------------\e[1;32m硬盘信息\e[0m--------------------------"
-        echo -e "\e[1;32m硬盘数量：\e[0m$(ls /dev/sd* | grep -v [1-9] | wc -l)" && df -hT
-        echo -e "--------------------------\e[1;32m操作系统\e[0m--------------------------"
-        echo -e "\e[1;32m系统版本:\e[0m"
-        [ -f /etc/os-release ] && cat /etc/os-release | grep PRETTY_NAME | cut -d '"' -f 2 || lsb_release -d
-        echo -e "\e[1;32m内核版本:\e[0m"
-        uname -smr
-        
+        echo -e "\e[1;32m=== 服务器性能信息 ===\e[0m"
+        echo -e "\e[1;32mCPU核心:\e[0m $(nproc) 线程"
+        echo -e "\e[1;32mCPU型号:\e[0m $(cat /proc/cpuinfo | grep "model name" | head -1 | cut -d: -f2)"
+        echo -e "\e[1;32m内存:\e[0m $(free -h | awk '/^Mem:/{print $2}')"
+        df -hT / | tail -1
+
     - name: 释放磁盘空间
-      uses: sbwml/actions@free-disk
+      uses: jlumbroso/free-disk-space@main
       with:
-        build-mount-path: /mnt/workdir
-        
-    - name: 初始化环境
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
+
+    - name: 初始化编译环境
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
@@ -79,34 +75,61 @@ jobs:
         sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
-        sudo mkdir -p /mnt/workdir
-        sudo chown $USER:$(id -gn) /mnt/workdir
 
     - name: 克隆源代码
       working-directory: /mnt/workdir
       run: |
-        pwd
-        df -hT $PWD
-        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /mnt/workdir/openwrt $GITHUB_WORKSPACE/openwrt
+        df -hT
+
+    # ==================== 缓存（大幅提升编译速度）====================
+    - name: 恢复缓存
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          openwrt/dl
+          openwrt/ccache
+          openwrt/staging_dir
+          openwrt/build_dir/target-*
+        key: openwrt-${{ env.REPO_BRANCH }}-${{ hashFiles('openwrt/.config') }}
+        restore-keys: |
+          openwrt-${{ env.REPO_BRANCH }}-
 
     - name: 加载自定义 feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
         cd openwrt
-        ls -al
         $GITHUB_WORKSPACE/$DIY_P1_SH
 
     - name: 更新 feeds
       run: cd openwrt && ./scripts/feeds update -a
-      
-    - name: 删除插件与缓存
-      run: cd openwrt && rm -rf feeds/luci/applications/luci-app-appfilter && rm -rf feeds/luci.tmp/info/.packageinfo-applications_luci-app-appfilter && sed -i '3809,3848d' feeds/luci.tmp/.packageinfo && rm -rf feeds/packages/net/open-app-filter && rm -rf feeds/packages.tmp/info/.packageinfo-net_open-app-filter && sed -i '79335,79369d' feeds/packages.tmp/.packageinfo
-      
-    - name: SSH 连接到 Actions
+
+    # ==================== 删除不需要的插件 ====================
+    - name: 删除指定插件与清理缓存
+      run: |
+        cd openwrt
+
+        echo "=== 删除 luci-app-appfilter ==="
+        rm -rf feeds/luci/applications/luci-app-appfilter
+        rm -rf feeds/luci.tmp/info/.packageinfo-applications_luci-app-appfilter 2>/dev/null || true
+        sed -i '/^Source-Makefile:.*luci-app-appfilter/,/^@@/d' feeds/luci.tmp/.packageinfo
+        sed -i '/^Package: luci-i18n-appfilter-zh-cn/,/^@@/d' feeds/luci.tmp/.packageinfo
+        sed -i '/^$/N;/^\n$/D' feeds/luci.tmp/.packageinfo
+
+        echo "=== 删除 open-app-filter ==="
+        rm -rf feeds/packages/net/open-app-filter
+        rm -rf feeds/packages.tmp/info/.packageinfo-net_open-app-filter 2>/dev/null || true
+        sed -i '/^Source-Makefile: feeds\/packages\/net\/open-app-filter\/Makefile/,/^@@/d' feeds/packages.tmp/.packageinfo
+        sed -i '/^Package: appfilter/,/^@@/d' feeds/packages.tmp/.packageinfo
+        sed -i '/^$/N;/^\n$/D' feeds/packages.tmp/.packageinfo
+
+        echo "✅ 插件清理完成"
+
+    - name: SSH 连接到 Actions（调试用）
       uses: P3TERX/ssh2actions@v1.0.0
-      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
+      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh != 'false') || contains(github.event.action, 'ssh')
       env:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -122,68 +145,86 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    - name: 下载 package 
-      id: package
+    - name: 下载依赖文件
       run: |
         cd openwrt
         make defconfig
-        make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
+        make download -j8 || make download -j4
 
     - name: 编译固件
       id: compile
       run: |
         cd openwrt
-        echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "=== 开始编译，使用 $(nproc) 线程 ==="
+        make -j$(nproc) || make -j$(($(nproc)/2)) || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
+
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
+    - name: 保存缓存
+      uses: actions/cache/save@v4
+      if: always()
+      with:
+        path: |
+          openwrt/dl
+          openwrt/ccache
+        key: openwrt-${{ env.REPO_BRANCH }}-${{ hashFiles('openwrt/.config') }}
+
     - name: 检查空间使用情况
-      if: (!cancelled())
+      if: always()
       run: df -hT
 
     - name: 上传 bin 目录
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v4
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
       with:
         name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: openwrt/bin
+        retention-days: 7
 
-    - name: 整理文件
+    - name: 压缩并整理固件
       id: organize
-      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      if: env.UPLOAD_FIRMWARE == 'true' && steps.compile.outputs.status == 'success'
       run: |
         cd openwrt/bin/targets/*/*
-        rm -rf packages
+        rm -rf packages 2>/dev/null || true
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: 上传固件目录
-      uses: actions/upload-artifact@v6
-      if: steps.organize.outputs.status == 'success' && !cancelled()
+      uses: actions/upload-artifact@v4
+      if: steps.organize.outputs.status == 'success'
       with:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
+        retention-days: 14
 
-    - name: 生成发布标签
+    - name: 生成 Release
       id: tag
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      if: env.UPLOAD_RELEASE == 'true' && steps.compile.outputs.status == 'success'
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        touch release.txt
-        [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
-        echo "status=success" >> $GITHUB_OUTPUT
+        echo "编译完成时间: $(date '+%Y-%m-%d %H:%M:%S')" > release.txt
+        echo "固件类型: ImmortalWrt x64" >> release.txt
+        echo "状态: 编译成功" >> release.txt
 
-    - name: 上传固件并发布
+    - name: 发布固件
       uses: softprops/action-gh-release@v2
-      if: steps.tag.outputs.status == 'success' && !cancelled()
+      if: steps.tag.outputs.status == 'success'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
         files: ${{ env.FIRMWARE }}/*
+
+    - name: 清理旧版本 Release
+      uses: dev-drprasad/delete-older-releases@v0.3.4
+      if: env.UPLOAD_RELEASE == 'true'
+      with:
+        keep_latest: 10
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
