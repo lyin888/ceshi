@@ -1,9 +1,9 @@
 #
-# https://github.com
+# https://github.com/P3TERX/Actions-OpenWrt
 #
 # File: .github/workflows/openwrt-bulder.yml
 # Description: Build OpenWrt using GitHub Actions
-# https://github.com
+# https://github.com/lwb1978/OpenWrt-Actions
 #
 # Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
 #
@@ -22,7 +22,7 @@ on:
         default: false
 
 env:
-  REPO_URL: https://github.com
+  REPO_URL: https://github.com/immortalwrt/immortalwrt.git
   REPO_BRANCH: v24.10.6
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
@@ -71,38 +71,36 @@ jobs:
       with:
         build-mount-path: /mnt/workdir
 
+    # ==================== 仅在此处添加：恢复缓存插件 ====================
     - name: 恢复编译缓存
       uses: actions/cache/restore@v4
       with:
         path: |
-          /mnt/workdir/ccache
           /mnt/workdir/openwrt/dl
-        key: ${{ runner.os }}-openwrt-${{ env.REPO_BRANCH }}
+          /mnt/workdir/openwrt/staging_dir/host
+        key: ${{ runner.os }}-openwrt-cache-${{ env.REPO_BRANCH }}
         restore-keys: |
-          ${{ runner.os }}-openwrt-
+          ${{ runner.os }}-openwrt-cache-
+    # ====================================================================
         
     - name: 初始化环境
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo -E apt-get -qq update
-        sudo bash -c 'bash <(curl -sL https://immortalwrt.org)'
+        sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo mkdir -p /mnt/workdir
         sudo chown $USER:$(id -gn) /mnt/workdir
-        mkdir -p /mnt/workdir/ccache
 
     - name: 克隆源代码
       working-directory: /mnt/workdir
       run: |
         pwd
         df -hT $PWD
-        if [ -d "openwrt/dl" ]; then mv openwrt/dl ./dl_cache; fi
-        rm -rf openwrt
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /mnt/workdir/openwrt $GITHUB_WORKSPACE/openwrt
-        if [ -d "dl_cache" ]; then mkdir -p openwrt/dl && mv dl_cache/* openwrt/dl/ && rm -rf dl_cache; fi
 
     - name: 加载自定义 feeds
       run: |
@@ -129,7 +127,7 @@ jobs:
         sed -i '/^Package: appfilter/,/^@@/d' feeds/packages.tmp/.packageinfo
         sed -i '/^$/N;/^\n$/D' feeds/packages.tmp/.packageinfo
       
-    - name: SSH 连接 to Actions
+    - name: SSH 连接到 Actions
       uses: P3TERX/ssh2actions@v1.0.0
       if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
       env:
@@ -139,18 +137,13 @@ jobs:
     - name: 安装 feeds
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: 加载自定义配置并应用缓存
+    - name: 加载自定义配置
       run: |
         [ -e files ] && mv files openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
-        echo "CONFIG_CCACHE=y" >> .config
-        echo "CONFIG_CCACHE_DIR=\"/mnt/workdir/ccache\"" >> .config
-        export CCACHE_DIR=/mnt/workdir/ccache
-        ccache -M 6G
-        ccache -s
 
     - name: 下载 package 
       id: package
@@ -233,11 +226,14 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+    # ==================== 仅在此处添加：保存缓存插件 ====================
     - name: 保存编译缓存
       uses: actions/cache/save@v4
       if: steps.compile.outputs.status == 'success' && !cancelled()
       with:
         path: |
-          /mnt/workdir/ccache
           /mnt/workdir/openwrt/dl
-        key: ${{ runner.os }}-openwrt-${{ env.REPO_BRANCH }}
+          /mnt/workdir/openwrt/staging_dir/host
+        key: ${{ runner.os }}-openwrt-cache-${{ env.REPO_BRANCH }}
+    # ====================================================================
+
